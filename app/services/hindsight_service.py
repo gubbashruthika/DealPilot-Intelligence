@@ -7,6 +7,7 @@ differences between SDK releases don't break the app.
 import asyncio
 import inspect
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -17,6 +18,7 @@ log = logging.getLogger("dealpilot.hindsight")
 
 _client = None
 _bank_ready = False
+_OFFLINE_MEMORIES: dict[str, list[dict]] = {}
 
 BANK_MISSION = (
     "Sales intelligence memory for a B2B salesperson. Track each prospect's "
@@ -31,11 +33,7 @@ def is_configured() -> bool:
 
 def require_configured() -> None:
     if not is_configured():
-        raise AppError(
-            "hindsight_not_configured",
-            "Hindsight API key is missing. Set HINDSIGHT_API_KEY in .env and restart the server.",
-            503,
-        )
+        log.info("Hindsight not configured; continuing in offline demo mode.")
 
 
 def _call(fn, **kwargs):
@@ -73,23 +71,40 @@ def _get_client():
     return _client
 
 
-def _ensure_bank(client) -> None:
+async def _ensure_bank(client) -> None:
     """Create the dedicated memory bank once per process (idempotent upsert)."""
     global _bank_ready
     if _bank_ready:
         return
-    create = getattr(client, "create_bank", None)
+    create = getattr(client, "acreate_bank", None)
+    bank_args = {
+        "bank_id": settings.hindsight_bank_id,
+        "name": "DealPilot",
+        "mission": BANK_MISSION,
+        "background": BANK_MISSION,
+    }
     if create:
         try:
-            _call(
-                create,
-                bank_id=settings.hindsight_bank_id,
-                name="DealPilot",
-                mission=BANK_MISSION,
-                background=BANK_MISSION,  # older SDKs call it `background`
-            )
+            await _call(create, **bank_args)
         except Exception as exc:  # bank may already exist; retain/recall will surface real problems
             log.info("create_bank skipped: %s", type(exc).__name__)
+    else:
+        create_sync = getattr(client, "create_bank", None)
+        if create_sync:
+            try:
+                def create_with_isolated_client():
+                    from hindsight_client import Hindsight
+
+                    sync_client = _call(
+                        Hindsight,
+                        base_url=settings.hindsight_api_url,
+                        api_key=settings.hindsight_api_key,
+                    )
+                    _call(sync_client.create_bank, **bank_args)
+
+                await asyncio.to_thread(create_with_isolated_client)
+            except Exception as exc:  # bank may already exist; retain/recall will surface real problems
+                log.info("create_bank skipped: %s", type(exc).__name__)
     _bank_ready = True
 
 
@@ -110,10 +125,23 @@ def _translate(exc: Exception) -> AppError:
 # ---------------------------------------------------------------- RETAIN
 
 async def retain(deal_name: str, content: str, document_id: Optional[str] = None) -> None:
-    """Store one sales interaction in Hindsight."""
+    """Store one sales interaction in Hindsight or in an in-memory fallback when keys are absent."""
+    if not is_configured():
+        key = (deal_name or "global").lower()
+        _OFFLINE_MEMORIES.setdefault(key, [])
+        _OFFLINE_MEMORIES[key].append(
+            {
+                "id": document_id or f"offline-{len(_OFFLINE_MEMORIES[key])}",
+                "text": content,
+                "type": "offline",
+                "context": f"Sales interaction for the deal with {deal_name}",
+                "date": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        return
     try:
         client = _get_client()
-        await asyncio.to_thread(_ensure_bank, client)
+        await _ensure_bank(client)
         await _call(
             client.aretain,
             bank_id=settings.hindsight_bank_id,
@@ -151,10 +179,27 @@ def _normalize(resp: Any) -> list[dict]:
 
 
 async def recall(query: str) -> list[dict]:
-    """Recall memories relevant to `query` from the DealPilot bank."""
+    """Recall memories relevant to `query` from the DealPilot bank or the offline demo store."""
+    if not is_configured():
+        raw = (query or "").lower()
+        tokens = {t for t in re.findall(r"[a-z0-9]+", raw) if len(t) > 2}
+        out: list[dict] = []
+        for records in _OFFLINE_MEMORIES.values():
+            for item in records:
+                text = (item.get("text") or "") + " " + (item.get("context") or "")
+                haystack = text.lower()
+                if not tokens or any(token in haystack for token in tokens):
+                    out.append({
+                        "id": str(item.get("id") or len(out)),
+                        "text": item.get("text") or "",
+                        "type": item.get("type") or "offline",
+                        "context": item.get("context"),
+                        "date": item.get("date"),
+                    })
+        return out[:25]
     try:
         client = _get_client()
-        await asyncio.to_thread(_ensure_bank, client)
+        await _ensure_bank(client)
         resp = await _call(
             client.arecall,
             bank_id=settings.hindsight_bank_id,
@@ -167,7 +212,13 @@ async def recall(query: str) -> list[dict]:
 
 
 def _count_sync() -> Optional[int]:
-    client = _get_client()
+    from hindsight_client import Hindsight
+
+    client = _call(
+        Hindsight,
+        base_url=settings.hindsight_api_url,
+        api_key=settings.hindsight_api_key,
+    )
     fn = getattr(client, "list_memories", None)
     if not fn:
         return None
@@ -177,10 +228,18 @@ def _count_sync() -> Optional[int]:
 
 
 async def memory_count() -> Optional[int]:
-    """Total memories Hindsight holds in the bank (cosmetic; None if unavailable)."""
+    """Total memories Hindsight holds in the bank or the fallback demo store."""
     if not is_configured():
-        return None
+        total = sum(len(v) for v in _OFFLINE_MEMORIES.values())
+        return total or 0
     try:
+        client = _get_client()
+        await _ensure_bank(client)
+        fn = getattr(client, "alist_memories", None)
+        if fn:
+            resp = await _call(fn, bank_id=settings.hindsight_bank_id, limit=1)
+            total = _field(resp, "total")
+            return int(total) if total is not None else None
         return await asyncio.to_thread(_count_sync)
     except Exception:
         return None

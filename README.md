@@ -1,40 +1,60 @@
 # DealPilot
 
-**Your deals remember what you forget.**
-
-DealPilot is a memory-powered sales intelligence agent. It stores every sales interaction in [Hindsight](https://hindsight.vectorize.io) and recalls the right memories to brief you before your next meeting.
+DealPilot is a real-time deal intelligence agent for sales teams. It combines persistent account memory from Hindsight, current market and company signals from SerpApi, and structured reasoning from Groq to tell a salesperson what changed, why it matters, and what to do next.
 
 ## Problem
 
-Deal context is scattered across meeting notes and conversations: objections, stakeholder concerns, pricing talks, competitors, requirements, commitments and unresolved issues. Before each meeting, a salesperson has to reconstruct it by hand, and things get missed.
+Sales teams lose valuable context between meetings: pricing objections, security requirements, stakeholder concerns, competitor comparisons, and deal risks get buried in notes and chat history. By the next call, people often have to reconstruct the story from memory and the latest market news becomes invisible to the deal conversation.
 
 ## Solution
 
-Paste notes after each interaction. DealPilot retains them in Hindsight. When you ask a question, or ask it to prepare you for a meeting, it recalls the relevant memories and has an LLM answer from them. The more interactions stored, the better the answers.
+DealPilot stores historical customer interactions in Hindsight, looks up relevant current company and market developments through SerpApi, and uses Groq to combine both streams into a concise deal brief with risk, opportunity, and recommended next action.
+
+## Key Features
+
+- Persistent deal memory with Hindsight
+- Real-time company and market intelligence with SerpApi
+- Competitor and business-signal retrieval tied to the account context
+- Deal-risk detection grounded in memory + live cues
+- Opportunity identification and next-best-action guidance
+- Source-aware explanations for live findings
+- Deal health scoring based on concrete deal evidence
+- What Changed summaries that connect historical context to current signals
+- Clear action recommendations built for a sales follow-up
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    UI["Browser UI<br/>HTML / CSS / vanilla JS"] -->|REST| API["FastAPI<br/>routes/deals.py, routes/chat.py"]
-    API --> Agent["services/deal_agent.py"]
-    Agent -->|retain / recall| HS["services/hindsight_service.py"]
-    Agent -->|prompt + recalled memories| LLM["services/llm_service.py"]
-    HS -->|hindsight-client SDK| H[("Hindsight<br/>memory bank")]
-    LLM -->|HTTPS| G["Groq API"]
+    UI["Browser UI<br/>FastAPI + Jinja + vanilla JS"] -->|REST| API["FastAPI routes"]
+    API --> Agent["app/services/deal_agent.py"]
+    Agent -->|historical context| HS["Hindsight memory bank"]
+    Agent -->|current intelligence| SERP["SerpApi search"]
+    Agent -->|reasoning| GROQ["Groq LLM"]
+    Agent --> Output["Deal brief + live intel + action plan"]
 ```
 
-## Hindsight's role
+## Tech Stack
 
-Hindsight is the **only** memory system. All Hindsight calls are isolated in `app/services/hindsight_service.py`. The one local file, `data/interactions.json`, is a UI index used only to draw the timeline and interaction count. It is never used to answer questions.
+- FastAPI for the API and UI serving layer
+- Jinja2 templates and vanilla JavaScript for the web UI
+- Hindsight for persistent deal-memory recall
+- SerpApi for live company and market signals
+- Groq for reasoning over memory + current information
+- Python dotenv for environment configuration
 
-## Flows
+## SerpApi Integration
 
-**Retain.** `POST /interactions` validates the text, calls Hindsight `retain` (with a deal-specific context and a unique document id), and only then adds the entry to the timeline. Hindsight extracts facts asynchronously, so new notes can take a few seconds to become searchable.
+SerpApi is a core part of the product, not a cosmetic call.
 
-**Recall.** For a question, the agent calls Hindsight `recall`. For meeting prep and overview questions it runs four focused queries (objections, stakeholders, requirements/decisions, plus the question itself), merges and de-duplicates the results. Recalled memories are returned to the UI and shown as "Recalled from Hindsight" cards.
+The live intelligence path is built in `app/services/serpapi_service.py` and is invoked from `app/services/deal_agent.py` immediately after Hindsight recall and before the final recommendation is generated. This allows DealPilot to:
 
-**LLM.** The recalled memories and the question are sent to Groq with instructions to use only those memories. Meeting prep returns structured JSON that is rendered as the Meeting Brief card. If nothing is recalled, DealPilot says so instead of calling the LLM. "Ask Without Memory" sends the same question with no memories, for the side-by-side demo.
+- research the customer company and recent announcements
+- pull current security, growth, pricing, leadership, and competitor developments
+- prioritize searches based on the specific deal context discovered in memory
+- add source-backed live signals to the final recommendation
+
+The search strategy is not a fixed "latest company news" call. It uses deal context such as security concerns, pricing objections, competitor mentions, and ROI questions to generate targeted queries. The resulting web findings are merged with memory, then passed to Groq for final reasoning.
 
 ## Setup
 
@@ -43,59 +63,84 @@ Requires Python 3.11+.
 ```bash
 cd dealpilot
 python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+# Windows
+.venv\Scripts\activate
+# macOS / Linux
+# source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env               # then edit .env
+copy .env.example .env
 ```
 
-### Environment variables
+## Environment Variables
 
 | Variable | Required | Description |
 |---|---|---|
-| `HINDSIGHT_API_URL` | no | Defaults to `https://api.hindsight.vectorize.io` |
-| `HINDSIGHT_API_KEY` | yes | Your Hindsight API key |
-| `HINDSIGHT_BANK_ID` | no | Dedicated memory bank (default `dealpilot`), created automatically |
-| `GROQ_API_KEY` | yes | Your Groq API key |
-| `GROQ_MODEL` | no | Defaults to `openai/gpt-oss-120b` |
+| `HINDSIGHT_API_URL` | No | Defaults to `https://api.hindsight.vectorize.io` |
+| `HINDSIGHT_API_KEY` | Yes | Hindsight API key |
+| `HINDSIGHT_BANK_ID` | No | Bank name used for the persistent deal memory |
+| `GROQ_API_KEY` | Yes | Groq API key |
+| `GROQ_MODEL` | No | Defaults to `openai/gpt-oss-120b` |
+| `SERPAPI_API_KEY` | Yes for live intelligence | SerpApi API key used for current account/company search |
 
-Keys live only in `.env`, which is git-ignored. The UI and API never return key values.
+Values are stored only in `.env`, which is git-ignored. The app never exposes secret values to the browser.
 
-## Run locally
+## Running Locally
 
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
-Open http://127.0.0.1:8000. Verify everything end to end with the server running:
+Then open:
+
+```text
+http://127.0.0.1:8000
+```
+
+To run the smoke check:
 
 ```bash
 python scripts/smoke_test.py
 ```
 
-## Demo scenario
+## Demo
 
-1. Click **Load Acme Demo** to retain three interactions (pricing and DataFlow, security requirements, CFO ROI ask).
-2. Wait a few seconds for Hindsight to process them.
-3. Ask **"Prepare me for my next Acme meeting."** and read the Meeting Brief and the recalled memory cards.
-4. Scroll to **Why memory matters**. Click **Ask Without Memory**, then **Ask With Hindsight**, and compare.
-5. Paste a new interaction, ask again, and watch the answer change.
+The demo uses an Acme Corp scenario:
 
-## API endpoints
+1. Load the Acme demo interactions.
+2. The deal history shows pricing sensitivity, security requirements, and ROI questions.
+3. Ask a meeting-prep question or a deal-status question.
+4. DealPilot recalls relevant memories from Hindsight.
+5. It runs targeted SerpApi searches for the customer and any relevant business developments.
+6. Groq combines the memory and the live signals into a deal brief, a What Changed summary, deal health, risks, opportunities, and next-best action.
+7. The UI surfaces live evidence, historical context, and a concrete recommendation for the next meeting.
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/health` | `{"status": "ok"}` |
-| GET | `/api/status` | Which keys are configured (flags only) |
-| GET | `/api/deals` | List deals |
-| GET | `/api/deals/{deal_id}` | Deal detail, timeline, Hindsight memory count |
-| POST | `/api/deals/{deal_id}/interactions` | Retain an interaction. Body: `{"content": "..."}` |
-| POST | `/api/deals/{deal_id}/ask` | Recall + answer. Body: `{"question": "...", "brief": null}` |
-| POST | `/api/deals/{deal_id}/ask-without-memory` | Same question, no memories |
-| POST | `/api/deals/{deal_id}/load-demo` | Retain the three Acme interactions |
-| GET | `/api/deals/{deal_id}/memories` | Memories recalled for the deal |
+This can be demonstrated end-to-end in under three minutes and communicates the core hackathon story clearly: memory tells us what happened, live search tells us what changed, and Groq explains what to do next.
 
-Errors return `{"error": "<safe message>", "code": "<machine code>"}`.
+## Hackathon positioning
 
-## Limitations
+DealPilot is an existing project upgraded for a hackathon demo. It keeps the same core architecture and improves the narrative around why the combination of Hindsight + SerpApi + Groq matters for real sales work: the agent remembers what was discussed before, discovers what changed externally, and recommends what to do next.
 
-Only the `acme-corp` deal is defined (add more in `DEALS` in `deal_agent.py`). Memories for all deals share one bank, and deals are separated by name in the recall query. The timeline is local to the machine running the server.
+## AI Disclosure
+
+This project uses the following AI-related infrastructure:
+
+- Hindsight for persistent memory retention and recall
+- Groq for LLM reasoning over historical and live context
+- SerpApi for live company and market intelligence retrieval
+- GitHub Copilot for coding assistance and iteration support during development
+
+The product is designed to combine these tools into one sales-intelligence workflow without replacing the existing project structure or memory system.
+
+## API Endpoints
+
+- `GET /health`
+- `GET /api/status`
+- `GET /api/deals`
+- `GET /api/deals/{deal_id}`
+- `POST /api/deals/{deal_id}/interactions`
+- `POST /api/deals/{deal_id}/load-demo`
+- `POST /api/deals/{deal_id}/ask`
+- `POST /api/deals/{deal_id}/ask-without-memory`
+- `GET /api/deals/{deal_id}/memories`
+
+All error responses are safe and machine-readable, and they do not reveal secrets.

@@ -85,6 +85,84 @@ function briefCard(b, count) {
       ${sec("Recommended next action", `<p>${esc(b.recommended_next_action) || "Not in memory yet."}</p>`, "wide action")}
     </div>`;
 }
+function intelligenceCard(r) {
+  const intel = r?.deal_intelligence || {};
+  const live = Array.isArray(intel.live_intelligence) ? intel.live_intelligence : [];
+  const risks = Array.isArray(intel.deal_risks) ? intel.deal_risks : [];
+  const opps = Array.isArray(intel.opportunities) ? intel.opportunities : [];
+  const sources = Array.isArray(intel.sources) ? intel.sources : [];
+  const changes = Array.isArray(intel.what_changed)
+    ? intel.what_changed
+    : [intel.what_changed].filter(Boolean);
+  const changesText = changes.map((change) => {
+    if (typeof change === "string") return change;
+    if (change && typeof change === "object") return change.detail || change.reason || change.text || JSON.stringify(change);
+    return String(change);
+  }).join(" ");
+
+  const dealHealth = r?.deal_health || intel.deal_health || { score: null, status: "Insufficient evidence", factors: [] };
+  const evolution = r?.historical_vs_current || intel.historical_vs_current || { before: [], now: [], impact: ["Insufficient evidence to determine a significant change."] };
+
+  const liveHtml = live.length
+    ? `<ul>${live.map((s) => {
+        const signal = typeof s === "string" ? s : (s.signal || s.title || "Current signal");
+        const source = typeof s === "string" ? "Web source" : (s.source || "Web source");
+        const detail = typeof s === "string" ? "" : (s.detail || s.snippet || "");
+        const why = typeof s === "string" ? "" : (s.why_it_matters || s.why || "This signal may affect the deal because it relates to recent customer concerns.");
+        const link = typeof s === "string" ? "" : (s.link || "");
+        return `<li><strong>${esc(signal)}</strong>${detail ? ` — ${esc(detail)}` : ""}${source ? ` <span class="muted small">Source: ${esc(source)}</span>` : ""}${why ? ` <div class="muted small">Why it may matter: ${esc(why)}</div>` : ""}${link ? ` <a href="${esc(link)}" target="_blank" rel="noreferrer">Open source</a>` : ""}</li>`;
+      }).join("")}</ul>`
+    : `<div class="empty">No reliable current web signal was found for this account.</div>`;
+
+  const risksHtml = risks.length
+    ? `<ul>${risks.map((risk) => `<li><strong>${esc(risk.level || "Medium")}</strong>: ${esc(risk.reason || "No reason provided.")}</li>`).join("")}</ul>`
+    : `<p class="none">No material risks were identified from the available context.</p>`;
+
+  const oppsHtml = opps.length
+    ? `<ul>${opps.map((opp) => `<li><strong>${esc(opp.title || "Opportunity")}</strong>: ${esc(opp.why || "Opportunity detail")}</li>`).join("")}</ul>`
+    : `<p class="none">No clear opportunities surfaced from the current evidence.</p>`;
+
+  const sourcesHtml = sources.length
+    ? `<ul>${sources.filter(Boolean).map((src) => `<li><a href="${esc(src)}" target="_blank" rel="noreferrer">${esc(src)}</a></li>`).join("")}</ul>`
+    : '<p class="none">No source links were available for the current signal.</p>';
+
+  const healthText = dealHealth.score == null
+    ? '<p class="none">Deal health: Insufficient evidence</p>'
+    : `<div class="health-wrap"><div class="health-score"><strong>${dealHealth.score}</strong><span>/ 100</span></div><div class="health-status">${esc(dealHealth.status)}</div></div><ul>${(dealHealth.factors || []).map((f) => `<li><strong>${esc(f.label)}</strong> — ${esc(f.level)} ${esc(f.direction === "negative" ? "risk" : "positive signal")}</li>`).join("") || '<li>No additional factors were identified.</li>'}</ul>`;
+
+  const evolutionHtml = `
+    <div class="compare">
+      <div class="panel"><h3>Before</h3><ul>${(evolution.before || []).length ? (evolution.before || []).map((item) => `<li>${esc(item)}</li>`).join("") : '<li class="none">No historical evidence identified.</li>'}</ul></div>
+      <div class="panel with"><h3>Now</h3><ul>${(evolution.now || []).length ? (evolution.now || []).map((item) => `<li>${esc(item)}</li>`).join("") : '<li class="none">No live evidence identified.</li>'}</ul></div>
+      <div class="panel wide"><h3>Impact</h3><ul>${(evolution.impact || []).length ? (evolution.impact || []).map((item) => `<li>${esc(item)}</li>`).join("") : '<li class="none">Insufficient evidence to determine a significant change.</li>'}</ul></div>
+    </div>`;
+
+  return `
+    <section class="card">
+      <div class="mem-head"><h2>Deal health</h2></div>
+      ${healthText}
+    </section>
+    <section class="card">
+      <div class="mem-head"><h2>Live intelligence</h2><span class="badge ${r?.live_status === "ok" ? "mem" : ""}">${r?.live_status === "ok" ? "Updated" : (r?.live_status || "Limited")}</span></div>
+      ${r?.live_message ? `<p class="small muted">${esc(r.live_message)}</p>` : ""}
+      ${liveHtml}
+    </section>
+    <section class="card">
+      <div class="mem-head"><h2>⚡ What changed?</h2></div>
+      ${evolutionHtml}
+    </section>
+    <section class="card">
+      <div class="mem-head"><h2>Deal intelligence</h2></div>
+      <div class="brief-grid">
+        <div class="brief-sec wide"><h3>Historical + current context</h3><p>${esc(changesText || "Insufficient evidence to determine a significant change.")}</p></div>
+        <div class="brief-sec"><h3>Deal risks</h3>${risksHtml}</div>
+        <div class="brief-sec"><h3>Opportunities</h3>${oppsHtml}</div>
+        <div class="brief-sec wide"><h3>🎯 Next best action</h3><p>${esc(intel.next_best_action || "Review the most relevant risk and opportunity with the account team.")}</p></div>
+        <div class="brief-sec wide"><h3>Why this action</h3><p>${esc(intel.why_this_action || "This action is based on the combination of historical memory and current market intelligence.")}</p></div>
+        <div class="brief-sec wide"><h3>Sources</h3>${sourcesHtml}</div>
+      </div>
+    </section>`;
+}
 
 /* ---------- routing ---------- */
 async function route() {
@@ -99,6 +177,7 @@ function statusBanner(s) {
   const missing = [];
   if (!s.hindsight_configured) missing.push("<code>HINDSIGHT_API_KEY</code>");
   if (!s.groq_configured) missing.push("<code>GROQ_API_KEY</code>");
+  if (!s.serpapi_configured) missing.push("<code>SERPAPI_API_KEY</code>");
   return missing.length
     ? `<div class="banner"><strong>Setup needed.</strong> Add ${missing.join(" and ")} to your <code>.env</code> file and restart the server.</div>` : "";
 }
@@ -172,6 +251,7 @@ async function renderDeal(id) {
         </section>
 
         <div id="brief-slot"></div>
+        <div id="intel-slot"></div>
 
         <section class="card">
           <h2>Why memory matters</h2>
@@ -222,6 +302,9 @@ async function renderDeal(id) {
     $("#brief-slot").innerHTML = `<section class="brief">${briefCard(r.brief, r.memory_count)}</section>`;
     $("#summary").innerHTML = fmt(r.brief.deal_status);
   };
+  const showIntel = (r) => {
+    $("#intel-slot").innerHTML = intelligenceCard(r);
+  };
 
   $("#remember").addEventListener("click", (e) => {
     const note = $("#note").value.trim();
@@ -247,6 +330,7 @@ async function renderDeal(id) {
       try {
         const r = await post(`${base}/ask`, { question });
         showMemories(r.memories);
+        if (r.deal_intelligence) showIntel(r);
         const badge = r.empty ? "" : `<span class="badge mem">Answered from ${r.memory_count} recalled memories</span>`;
         if (r.brief) { showBrief(r); pending.innerHTML = `${badge}<p>Your meeting brief is ready below.</p>${fmt(r.answer)}`; }
         else pending.innerHTML = `${badge}${fmt(r.answer)}`;
@@ -262,13 +346,18 @@ async function renderDeal(id) {
     try {
       const r = await post(`${base}/ask`, { question: "Prepare me for my next Acme meeting.", brief: true });
       showMemories(r.memories);
+      if (r.deal_intelligence) showIntel(r);
       if (r.brief) showBrief(r); else toast(r.answer, r.empty);
     } catch (err) { toast(err.message, true); }
   }));
 
   $("#no-mem").addEventListener("click", (e) => withLoading(e.target, "Asking…", async () => {
     $("#out-no").innerHTML = `<span class="spinner"></span>Thinking without memory…`;
-    try { const r = await post(`${base}/ask-without-memory`, { question: PREP_Q }); $("#out-no").innerHTML = fmt(r.answer); }
+    try {
+      const r = await post(`${base}/ask-without-memory`, { question: PREP_Q });
+      if (r.deal_intelligence) showIntel(r);
+      $("#out-no").innerHTML = fmt(r.answer);
+    }
     catch (err) { $("#out-no").innerHTML = `<span style="color:var(--err)">${esc(err.message)}</span>`; }
   }));
   $("#with-mem").addEventListener("click", (e) => withLoading(e.target, "Recalling…", async () => {
@@ -276,6 +365,7 @@ async function renderDeal(id) {
     try {
       const r = await post(`${base}/ask`, { question: PREP_Q, brief: false });
       showMemories(r.memories);
+      if (r.deal_intelligence) showIntel(r);
       $("#out-yes").innerHTML = (r.empty ? "" : `<p><span class="badge mem">Based on ${r.memory_count} recalled memories</span></p>`) + fmt(r.answer);
     } catch (err) { $("#out-yes").innerHTML = `<span style="color:var(--err)">${esc(err.message)}</span>`; }
   }));

@@ -2,7 +2,7 @@ from fastapi import APIRouter
 
 from app.config import settings
 from app.models import InteractionIn
-from app.services import deal_agent, hindsight_service, llm_service
+from app.services import deal_agent, hindsight_service, llm_service, serpapi_service
 
 router = APIRouter(prefix="/api")
 
@@ -13,6 +13,7 @@ async def status():
     return {
         "hindsight_configured": hindsight_service.is_configured(),
         "groq_configured": llm_service.is_configured(),
+        "serpapi_configured": serpapi_service.is_configured(),
         "bank_id": settings.hindsight_bank_id,
         "model": settings.groq_model,
     }
