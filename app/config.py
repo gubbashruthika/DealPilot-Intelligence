@@ -21,7 +21,6 @@ class Settings:
     hindsight_bank_id: str
     groq_api_key: str
     groq_model: str
-    serpapi_api_key: str
     data_dir: Path
 
 
@@ -31,6 +30,5 @@ settings = Settings(
     hindsight_bank_id=_env("HINDSIGHT_BANK_ID", "dealpilot"),
     groq_api_key=_env("GROQ_API_KEY"),
     groq_model=_env("GROQ_MODEL", "openai/gpt-oss-120b"),
-    serpapi_api_key=_env("SERPAPI_API_KEY"),
     data_dir=BASE_DIR / "data",
 )

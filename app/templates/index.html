@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=2">
+  <link rel="stylesheet" href="/static/style.css?v=5">
 </head>
 <body>
   <header class="topbar">
@@ -15,10 +15,30 @@
       <svg width="24" height="24" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#2748D6"/><path d="M7 14.5 21 8l-4.5 13-3-5.2z" fill="#fff"/><circle cx="21" cy="8" r="2.4" fill="#F5B83D"/></svg>
       <span>DealPilot</span>
     </a>
-    <span class="tagline">Your deals remember what you forget.</span>
+    <span class="tagline">Your deals remember what you forget</span>
+    <span class="topbar-note">Sales workspace</span>
   </header>
-  <main id="app" class="wrap" aria-live="polite"></main>
+  <div class="app-layout">
+    <aside class="sidebar" aria-label="Main navigation">
+      <div class="sidebar-label">WORKSPACE</div>
+      <nav class="side-nav">
+        <a class="nav-link" href="#/" data-nav="dashboard"><span aria-hidden="true">⌂</span>Dashboard</a>
+        <a class="nav-link" href="#/customers" data-nav="customers"><span aria-hidden="true">◉</span>Customers</a>
+        <a class="nav-link" href="#/deal/acme-corp" data-nav="meeting"><span aria-hidden="true">✦</span>Meeting Assistant</a>
+        <a class="nav-link" href="#/activity" data-nav="activity"><span aria-hidden="true">↺</span>Activity</a>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="sidebar-tip">
+          <span class="tip-mark" aria-hidden="true">✦</span>
+          <strong>Better prepared, every time</strong>
+          <p>Capture a conversation. DealPilot keeps the context ready for your next meeting.</p>
+        </div>
+        <button class="primary sidebar-capture" type="button" data-capture="acme-corp">＋ Capture meeting</button>
+      </div>
+    </aside>
+    <main id="app" class="content wrap" aria-live="polite"></main>
+  </div>
   <div id="toast" class="toast" role="status" hidden></div>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=8"></script>
 </body>
 </html>

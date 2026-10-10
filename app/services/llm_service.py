@@ -24,7 +24,10 @@ async def complete(
 ) -> str:
     if not is_configured():
         prompt = messages[-1].get("content", "") if messages else ""
-        memory_text = "Recalled memories from Hindsight" in prompt
+        memory_text = any(
+            marker in prompt
+            for marker in ("Recalled memories from Hindsight", "Customer-specific context")
+        )
         if json_mode:
             if memory_text:
                 return (

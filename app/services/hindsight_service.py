@@ -47,6 +47,20 @@ def _call(fn, **kwargs):
     return fn(**kwargs)
 
 
+def _supports_parameter(fn, name: str) -> bool:
+    try:
+        parameters = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in parameters or any(
+        parameter.kind is parameter.VAR_KEYWORD for parameter in parameters.values()
+    )
+
+
+def _deal_tag(deal_id: str) -> str:
+    return f"dealpilot_deal_{deal_id}"
+
+
 def _field(obj: Any, name: str, default=None):
     if isinstance(obj, dict):
         return obj.get(name, default)
@@ -124,10 +138,10 @@ def _translate(exc: Exception) -> AppError:
 
 # ---------------------------------------------------------------- RETAIN
 
-async def retain(deal_name: str, content: str, document_id: Optional[str] = None) -> None:
+async def retain(deal_id: str, deal_name: str, content: str, document_id: Optional[str] = None) -> None:
     """Store one sales interaction in Hindsight or in an in-memory fallback when keys are absent."""
     if not is_configured():
-        key = (deal_name or "global").lower()
+        key = deal_id
         _OFFLINE_MEMORIES.setdefault(key, [])
         _OFFLINE_MEMORIES[key].append(
             {
@@ -141,6 +155,12 @@ async def retain(deal_name: str, content: str, document_id: Optional[str] = None
         return
     try:
         client = _get_client()
+        if not _supports_parameter(client.aretain, "tags"):
+            raise AppError(
+                "hindsight_scoping_unsupported",
+                "The installed Hindsight client cannot tag memories by customer, so saving was stopped to prevent cross-customer recall.",
+                503,
+            )
         await _ensure_bank(client)
         await _call(
             client.aretain,
@@ -149,6 +169,7 @@ async def retain(deal_name: str, content: str, document_id: Optional[str] = None
             context=f"Sales interaction for the deal with {deal_name}",
             document_id=document_id,
             timestamp=datetime.now(timezone.utc),
+            tags=[_deal_tag(deal_id)],
         )
     except Exception as exc:
         raise _translate(exc)
@@ -173,40 +194,59 @@ def _normalize(resp: Any) -> list[dict]:
                 "type": _field(r, "type") or _field(r, "fact_type"),
                 "context": _field(r, "context"),
                 "date": str(date) if date else None,
+                "source": "hindsight",
             }
         )
     return out
 
 
-async def recall(query: str) -> list[dict]:
+async def recall(query: str, deal_id: str) -> list[dict]:
     """Recall memories relevant to `query` from the DealPilot bank or the offline demo store."""
     if not is_configured():
         raw = (query or "").lower()
         tokens = {t for t in re.findall(r"[a-z0-9]+", raw) if len(t) > 2}
         out: list[dict] = []
-        for records in _OFFLINE_MEMORIES.values():
-            for item in records:
-                text = (item.get("text") or "") + " " + (item.get("context") or "")
-                haystack = text.lower()
-                if not tokens or any(token in haystack for token in tokens):
-                    out.append({
-                        "id": str(item.get("id") or len(out)),
-                        "text": item.get("text") or "",
-                        "type": item.get("type") or "offline",
-                        "context": item.get("context"),
-                        "date": item.get("date"),
-                    })
+        for item in _OFFLINE_MEMORIES.get(deal_id, []):
+            text = (item.get("text") or "") + " " + (item.get("context") or "")
+            haystack = text.lower()
+            if not tokens or any(token in haystack for token in tokens):
+                out.append({
+                    "id": str(item.get("id") or len(out)),
+                    "text": item.get("text") or "",
+                    "type": item.get("type") or "offline",
+                    "context": item.get("context"),
+                    "date": item.get("date"),
+                    "source": "offline",
+                })
         return out[:25]
     try:
         client = _get_client()
+        if not _supports_parameter(client.arecall, "tags") or not _supports_parameter(client.arecall, "tags_match"):
+            raise AppError(
+                "hindsight_scoping_unsupported",
+                "The installed Hindsight client cannot filter memories by customer, so recall was stopped to prevent cross-customer results.",
+                503,
+            )
         await _ensure_bank(client)
         resp = await _call(
             client.arecall,
             bank_id=settings.hindsight_bank_id,
             query=query,
             budget="mid",
+            tags=[_deal_tag(deal_id)],
+            tags_match="exact",
         )
-        return _normalize(resp)
+        results = _field(resp, "results")
+        if results is None and isinstance(resp, (list, tuple)):
+            results = resp
+        scoped_tag = _deal_tag(deal_id)
+        scoped_results = [
+            result
+            for result in results or []
+            if isinstance(_field(result, "tags"), list)
+            and set(_field(result, "tags")) == {scoped_tag}
+        ]
+        return _normalize(scoped_results)
     except Exception as exc:
         raise _translate(exc)
 
